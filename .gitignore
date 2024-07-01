@@ -1,0 +1,6 @@
+# created by virtualenv automatically
+../Lib
+Scripts
+pyvenv.cfg
+_test_units
+__pycache__
