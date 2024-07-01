@@ -1,0 +1,397 @@
+# IMPORTS
+import os
+import json
+import asyncio
+import time
+from datetime import datetime
+from threading import Thread
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters.command import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram import F
+
+from pymongo import MongoClient
+
+from assets.randomizer import gen, gen_alt
+from assets.clear import _clear
+from assets.file_op import *
+from assets.button_gen import Inline
+
+# LOAD ADDITIONAL FUNCTIONS
+import funcs
+from funcs import *
+
+last_usage = time.time()
+new_usage = last_usage
+
+def time_refresh():
+    last_usage = time.time()
+
+def _report(type, text, user=False, timed=False):
+    global last_usage
+    new_usage = time.time()
+    run_time = new_usage - last_usage
+    last_usage = new_usage
+    print(f"{report_types[type]} {str(user)+': ' if user else ""}{text} ({round(run_time,3) if timed else ""})")
+
+def _big_report(text):
+    print("="*int(20-(len(text)/2)) + text + "="*int(20-(len(text)/2)))
+
+data = json.load(open('base/general.json', 'r'))
+report_types = json.load(open('base/console_texts.json', 'r'))
+texts = json.load(open('base/messages.json', 'r', encoding='utf-8'))
+
+
+# BOT SETUP AND START
+_big_report("LAUNCHING")
+_report("load", f"Loading MongoDB at {data["db_adress"]}")
+client = MongoClient(data["db_adress"])
+db = client['anon_chat']
+users = db["users"]
+userchats = db["chats"]
+
+_report("load", "Loading bot")
+default_properties = DefaultBotProperties(parse_mode=ParseMode.HTML)
+bot = Bot(data["token"], default=default_properties)
+funcs.bot = bot
+dp = Dispatcher()
+
+# COMMAND HANDLERS
+@dp.message(Command('me'))
+async def profile_gen(msg: types.Message):
+    await control_profile(msg.from_user.id, msg)
+
+async def control_profile(user_id, message_to_answer, msg=False):
+    if not msg:
+        msg = await message_to_answer.answer(await my_profile(user_id))
+    await profile_cell(msg, user_id, id_gen(8))
+    reload_data = get_user_key(user_id, "profile_cell")
+    await msg.edit_text(await my_profile(user_id), reply_markup=Inline.profile_control(Inline, user_id, reload_data))
+
+@dp.message(Command('start'))
+async def start(msg: types.Message):
+    if not locate_user(msg.from_user.id):
+        await msg_with_hide(texts["welcome"], msg)
+    else:
+        await msg_with_hide(texts["welcome_alt"], msg)
+
+@dp.message(Command('reg'))
+async def reg(msg: types.Message):
+    user_id = msg.from_user.id
+    usercode = gen_alt(6)
+    if not locate_user(user_id):
+        upload(users, set_up_user(user_id, usercode))
+        await msg_with_hide(texts["reg_1"].format(u=usercode), msg)
+    else:
+        await msg_with_hide(texts["registered"].format(u=usercode), msg)
+
+@dp.message(Command('menu'))
+async def menu(msg: types.Message):
+    user_id = msg.from_user.id
+    if not locate_user(user_id):
+        await msg_with_hide(texts["reg_2"], msg)
+        return
+    await msg.answer(texts["u_main"], reply_markup=Inline.menu_a())
+
+@dp.message(Command('create'))
+async def create(msg: types.Message):
+    user_id = msg.from_user.id
+    gen_name = gen(5)
+    await set_up(gen_name, user_id)
+    await msg_with_hide(texts["create"].format(id=gen_name), msg)
+    append_key(users, {"orig": user_id}, {"joined": gen_name})
+
+@dp.message(Command('export'))
+async def get(msg: types.Message):
+    await load_get(msg.text.split(' ')[1], msg.from_user.id, msg)
+
+@dp.message(Command('join'))
+async def join(msg: types.Message):
+    args = msg.text.split(' ')[1:]
+    user_id = msg.from_user.id
+    chat_id = args[0]
+    await join_id(user_id, chat_id, msg)
+
+@dp.message(Command('open'))
+async def open_chat(msg: types.Message):
+    args = msg.text.split(' ')[1:]
+    user_id = msg.from_user.id
+    chat_id = args[0]
+    if chat_id in get_user_key(user_id, "joined"):
+        desc = get_chat_key(chat_id, "description")
+        host = get_chat_key(chat_id, "host")
+        set_user_key(user_id, {"state": chat_id})
+        await msg_with_hide(texts["open_1"].format(id=chat_id, desc=desc, host=host), msg)
+        await asyncio.create_task(listener(msg, chat_id, 0.5, user_id))
+
+@dp.message(Command('close'))
+async def close(msg: types.Message):
+    user_id = msg.from_user.id
+    set_user_key(user_id, {"state": "", "cooldown": 0})
+    await msg_with_hide(texts["closed"], msg)
+
+# ADMIN COMMANDS
+@dp.message(Command('clear'))
+async def clear(msg: types.Message):
+    if msg.from_user.id in data["admins"]:
+        users.drop()
+        userchats.drop()
+        await msg.answer('cleared')
+
+@dp.message(Command('exit'))
+async def exit(msg):
+    if msg.from_user.id in data["admins"]:
+        await newsletter_handler("Bot was shut down")
+        await dp.stop_polling()
+        await asyncio.sleep(2)
+        await bot.session.close()
+
+# CALLBACK REACTIONS
+@dp.callback_query(lambda query: query.data == "slice_down")
+async def down(callback: types.CallbackQuery):
+    slice, max_page, percent, content = await modulate_slice(callback, -1)
+    await callback.message.edit_text(texts["page_template"].format(page=slice + 1, max=max_page, precent=percent, text=content), reply_markup=Inline.arrows() if slice > 0 else Inline.up())
+
+@dp.callback_query(lambda query: query.data == "slice_up")
+async def up(callback: types.CallbackQuery):
+    slice, max_page, percent, content = await modulate_slice(callback, 1)
+    await callback.message.edit_text(texts["page_template"].format(page=slice + 1, max=max_page, precent=percent, text=content), reply_markup=Inline.arrows() if slice != max_page - 1 else Inline.down())
+
+@dp.message(F.text)
+async def echo_message(msg: types.Message):
+    user_id = msg.from_user.id
+    state = get_user_key(user_id, "state")
+    if state:
+        if '<' in msg.text or '>' in msg.text:
+            await msg_with_hide(texts["format_error"], msg)
+            return
+        await message_write(msg)
+
+    current = get_user_key(user_id, "on_panel")
+    try:
+        if current == "allow":
+            if await process_allow(msg.text, get_user_key(user_id, "redacting"), msg):
+                await msg_with_hide(texts["success"], msg)
+            set_user_key(user_id, {"on_panel": ""})
+        elif current == "desc":
+            set_user_key(user_id, {"description": msg.text, "on_panel": ""})
+            await msg_with_hide(texts["success"], msg)
+        elif current.split(':')[0] == "set_desc_chat":
+            set_chat_key(current.split(':')[1], {"description": msg.text})
+            set_user_key(user_id, {"on_panel": ""})
+            await msg_with_hide(texts["success"], msg)
+        elif current == "new_admin":
+            await make_admin(msg.text, get_user_key(user_id, "redacting"), msg)
+            await msg_with_hide(texts["success"], msg)
+        elif current == "ban":
+            await ban(msg.text, get_user_key(user_id, "redacting"), msg, bot)
+            await msg_with_hide(texts["success"], msg)
+        elif current == "joining":
+            await join_id(user_id, msg.text, msg)
+        set_user_key(user_id, {"on_panel": ""})
+    except Exception as e:
+        await msg_with_hide(texts["error"], msg)
+
+@dp.message(F.photo)
+async def echo_photo(msg: types.Message):
+    time_now, user_id, username, sent, cooldown = await set_msg_data(msg)
+    if not cooldown:
+        chat_id = get_user_key(user_id, "state")
+        usercode = get_user_key(user_id, "id")
+        count = get_chat_key(chat_id, "message_count")
+        if chat_id:
+            set_chat_key(chat_id, {"message_count": count + 1})
+            photo = msg.photo[-1].file_id
+            await send_photo(msg, usercode, time_now, photo, chat_id)
+            await asyncio.create_task(cd(user_id, 3))
+    else:
+        await cooldown_writer(user_id, msg)
+
+# CALLBACK FUNCTIONS
+@dp.callback_query(lambda query: query.data == "userlist")
+async def get_user_list(callback: types.CallbackQuery):
+    output = 'Пользователи:'
+    redacting = get_user_key(callback.from_user.id, "redacting")
+    for user in get_chat_key(redacting, "access"):
+        output += f'\n{get_user_key(user, "id")}'
+    await callback.message.answer(output)
+
+@dp.callback_query(lambda query: query.data == "allow")
+async def allow_user(callback: types.CallbackQuery):
+    await msg_with_hide(texts["allow_ask"], callback.message)
+    set_user_key(callback.from_user.id, {"on_panel": "allow"})
+
+@dp.callback_query(lambda query: query.data.startswith('set_desc'))
+async def set_desc_chat(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    set_user_key(callback.from_user.id, {"on_panel": f"set_desc_chat:{args[1]}"})
+    await msg_with_hide(texts["chat_desc_input"], callback.message)
+
+@dp.callback_query(lambda query: query.data == "make_admin")
+async def new_admin(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    await bot.send_message(callback.from_user.id, texts["admin_ask"])
+    set_user_key(callback.from_user.id, {"redacting": args[1], "on_panel": "new_admin"})
+
+@dp.callback_query(lambda query: query.data == "ban_user")
+async def ban_user(callback: types.CallbackQuery):
+    await bot.send_message(callback.from_user.id, texts["ban_ask"])
+    set_user_key(callback.from_user.id, {"on_panel": "ban"})
+
+@dp.callback_query(lambda query: query.data == "create")
+async def create_button(callback: types.CallbackQuery):
+    await alt_create(callback.from_user.id, callback.message)
+
+@dp.callback_query(lambda query: query.data.startswith('alt_open'))
+async def alt_open(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    chat_id = args[1]
+    user_id = callback.from_user.id
+    if chat_id in get_user_key(user_id, "joined"):
+        desc = get_chat_key(chat_id, "description")
+        host = await get_usercode(get_chat_key(chat_id, "host"))
+        set_user_key(user_id, {"state": chat_id})
+        await msg_with_hide(texts["open_1"].format(id=chat_id, desc=desc, host=host), callback.message)
+        await asyncio.create_task(listener(callback.message, chat_id, 0.5, user_id))
+
+@dp.callback_query(lambda query: query.data.startswith('hide_msg'))
+async def hide_msg(callback: types.CallbackQuery):
+    try:
+        args = callback.data.split(':')
+        deserialized = get_cached(int(args[1]), "hide_cell", "content")
+        msg = await serialize_one(deserialized, bot)
+        delete_key(cache, {"id": int(args[1]), "type": "hide_cell"})
+        await msg.delete()
+    except Exception as e:
+        print("bad request " + str(e))
+
+@dp.callback_query(lambda query: query.data.startswith('get'))
+async def get_button(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    await load_get(args[1], args[2], callback.message)
+
+@dp.callback_query(lambda query: query.data.startswith('to_admin'))
+async def alt_admin(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    if int(args[1]) not in get_chat_key(args[2], "banned"):
+        await make_admin(int(args[1]), args[2], callback.message)
+        await msg_with_hide(texts["success"], callback.message)
+
+@dp.callback_query(lambda query: query.data.startswith('to_ban'))
+async def alt_ban(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    await ban(await get_usercode(args[1]), args[2], callback.message, bot)
+
+@dp.callback_query(lambda query: query.data.startswith('reload'))
+async def reload_profile(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    data = get_cached(int(args[1]), "profile_cell", "content")
+    msg = await serialize_one(data, bot)
+    await control_profile(callback.from_user.id, callback.message, msg=msg)
+
+@dp.callback_query(lambda query: query.data.startswith('desc'))
+async def desc_set(callback: types.CallbackQuery):
+    set_user_key(callback.from_user.id, {"on_panel": "desc"})
+    await msg_with_hide(texts["desc_input"], callback.message)
+
+async def button_match(current, button, callback, args):
+    buttons = []
+    await status_refresh(callback.from_user.id)
+    content = " "
+    match button:
+        case 'main':
+            content = texts["u_main"]
+            buttons = Inline.menu_a()
+        case 'chats':
+            content = texts["u_chats"]
+            set_user_key(callback.from_user.id, {"on_panel": "", "redacting": ""})
+            buttons = Inline.menu_chats()
+        case 'create':
+            content = False
+            buttons = Inline.menu_back_chats()
+            await alt_create(callback.from_user.id, callback.message)
+        case 'open':
+            content = texts["u_select"]
+            buttons = Inline.joined_gen()
+        case 'redact':
+            content = texts["u_chat_select"]
+            buttons = None
+        case 'join':
+            content = False
+            set_user_key(callback.from_user.id, {"on_panel": "joining"})
+            await msg_with_hide(texts["join_ask"], callback.message)
+        case 'chatpanel':
+            set_user_key(callback.from_user.id, {"redacting": args[2]})
+            desc = get_chat_key(args[2], "description")
+            host = await get_usercode(get_chat_key(args[2], "host"))
+            msgs = get_chat_key(args[2], "message_count")
+            content = texts["chat_control"].format(book=texts[f"book_{Inline.book_emoji(Inline, args[2])}"], host=host, msgs=msgs, id=args[2], desc=desc)
+            buttons = Inline.control_panel(Inline, args[2], callback, callback.from_user.id)
+        case 'profile':
+            content = False
+            buttons = None
+            await generate_profile(args[-1], False, callback)
+        case 'list':
+            content = texts["u_chat_list"]
+            buttons = None
+        case 'your_profile':
+            content = False
+            buttons = False
+            await control_profile(callback.from_user.id, callback.message)
+        case 'users_list':
+            content = texts["user_select"]
+            buttons = None
+        case 'delete':
+            await delete_chat(args[-1])
+            content = texts["success"]
+            buttons = Inline.deleted_prev(Inline)
+        case 'delete_chat':
+            content = texts["delete_ask"]
+            buttons = Inline.delete_ask(Inline, args[2], callback)
+        case 'delete_admin':
+            content = False
+            buttons = False
+            await delete_admin(args[2], args[3], callback.message)
+        case 'user_control':
+            content = texts["user_control"].format(book=texts[f"book_{Inline.book_emoji(Inline, args[3])}"], user=await get_usercode(args[2]), chat=args[3])
+            buttons = Inline.user_control(Inline, callback, args[2], args[3])
+    return [content, buttons]
+
+@dp.callback_query(lambda query: query.data.startswith('menu'))
+async def menu(callback: types.CallbackQuery):
+    args = callback.data.split(':')
+    button = args[1]
+    current = callback.message.text
+    try:
+        output = await button_match(current, button, callback, args)
+        content = output[0]
+        buttons = output[1]
+        if button == 'list':
+            buttons = Inline.joined_gen(Inline, callback)
+        elif button == 'users_list':
+            buttons = Inline.users_gen(Inline, callback, get_user_key(callback.from_user.id, "redacting"))
+        if content:
+            await callback.message.edit_text(text=content, reply_markup=buttons)
+    except:
+        await msg_with_hide(texts["error"], callback.message)
+
+async def newsletter_handler(content):
+    for user in users.find():
+        try:
+            await bot.send_message(user["orig"], content)
+            _report("load", "Sent newsletter", user["orig"])
+        except:
+            _report("load", "Error while sending newsletter", user["orig"])
+
+# POLLING
+async def main():
+    _report("load", "Safe update")
+    await safe_update(bot)
+    _big_report("BOT LAUNCHED")
+    await dp.start_polling(bot)
+
+if __name__  == "__main__":
+    asyncio.run(main())
