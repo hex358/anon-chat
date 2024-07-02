@@ -1,8 +1,0 @@
-# created by virtualenv automatically
-../Lib
-Scripts
-pyvenv.cfg
-_test_units
-logs.log
-**/__pycache__/
-.gitignore
