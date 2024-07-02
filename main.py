@@ -6,12 +6,12 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import F
 
-from assets.randomizer import gen_alt
+from randomizer import gen_alt
 
 # LOAD ADDITIONAL FUNCTIONS
 import funcs
 from funcs import *
-from wrappers import _big_report, _report
+from wrappers import _big_report, _report, log
 
 data = json.load(open('config.json', 'r'))
 texts = json.load(open('base/messages.json', 'r', encoding='utf-8'))
@@ -32,6 +32,7 @@ dp = Dispatcher()
 
 # COMMAND HANDLERS
 @dp.message(Command('me'))
+@log
 async def profile_gen(msg: types.Message):
     await control_profile(msg.from_user.id, msg)
 
@@ -43,6 +44,7 @@ async def control_profile(user_id, message_to_answer, msg=False):
     await msg.edit_text(await my_profile(user_id), reply_markup=Inline.profile_control(Inline, user_id, reload_data))
 
 @dp.message(Command('start'))
+@log
 async def start(msg: types.Message):
     if not locate_user(msg.from_user.id):
         await msg_with_hide(texts["welcome"], msg)
@@ -50,6 +52,7 @@ async def start(msg: types.Message):
         await msg_with_hide(texts["welcome_alt"], msg)
 
 @dp.message(Command('reg'))
+@log
 async def reg(msg: types.Message):
     user_id = msg.from_user.id
     usercode = gen_alt(6)
@@ -60,6 +63,7 @@ async def reg(msg: types.Message):
         await msg_with_hide(texts["registered"].format(u=usercode), msg)
 
 @dp.message(Command('menu'))
+@log
 async def menu(msg: types.Message):
     user_id = msg.from_user.id
     if not locate_user(user_id):
@@ -68,6 +72,7 @@ async def menu(msg: types.Message):
     await msg.answer(texts["u_main"], reply_markup=Inline.menu_a())
 
 @dp.message(Command('create'))
+@log
 async def create(msg: types.Message):
     user_id = msg.from_user.id
     gen_name = gen(5)
@@ -76,10 +81,12 @@ async def create(msg: types.Message):
     append_key(users, {"orig": user_id}, {"joined": gen_name})
 
 @dp.message(Command('export'))
+@log
 async def get(msg: types.Message):
     await load_get(msg.text.split(' ')[1], msg.from_user.id, msg)
 
 @dp.message(Command('join'))
+@log
 async def join(msg: types.Message):
     args = msg.text.split(' ')[1:]
     user_id = msg.from_user.id
@@ -87,6 +94,7 @@ async def join(msg: types.Message):
     await join_id(user_id, chat_id, msg)
 
 @dp.message(Command('open'))
+@log
 async def open_chat(msg: types.Message):
     args = msg.text.split(' ')[1:]
     user_id = msg.from_user.id
@@ -99,6 +107,7 @@ async def open_chat(msg: types.Message):
         await asyncio.create_task(listener(msg, chat_id, 0.5, user_id))
 
 @dp.message(Command('close'))
+@log
 async def close(msg: types.Message):
     user_id = msg.from_user.id
     set_user_key(user_id, {"state": "", "cooldown": 0})
@@ -106,6 +115,7 @@ async def close(msg: types.Message):
 
 # ADMIN COMMANDS
 @dp.message(Command('drop'))
+@log
 async def clear(msg: types.Message):
     if msg.from_user.id in data["admins"]:
         users.drop()
@@ -114,32 +124,37 @@ async def clear(msg: types.Message):
         await msg.answer('Dropped databases')
 
 @dp.message(Command('newsletter'))
+@log
 async def newsletter(msg: types.Message):
-    print(msg.__name__)
     content = msg.text.split(' ')[1]
     if msg.from_user.id in data["admins"]:
         await newsletter_handler(content)
 
 @dp.message(Command('kill'))
+@log
 async def kill(msg):
+    _big_report("KILLING BOT PROCESS")
     if msg.from_user.id in data["admins"]:
         await newsletter_handler("Bot was shut down")
         await dp.stop_polling()
-        await asyncio.sleep(2)
         await bot.session.close()
+    _big_report("BOT KILLED")
 
 # CALLBACK REACTIONS
 @dp.callback_query(lambda query: query.data == "slice_down")
+@log
 async def down(callback: types.CallbackQuery):
     slice, max_page, percent, content = await modulate_slice(callback, -1)
     await callback.message.edit_text(texts["page_template"].format(page=slice + 1, max=max_page, precent=percent, text=content), reply_markup=Inline.arrows() if slice > 0 else Inline.up())
 
 @dp.callback_query(lambda query: query.data == "slice_up")
+@log
 async def up(callback: types.CallbackQuery):
     slice, max_page, percent, content = await modulate_slice(callback, 1)
     await callback.message.edit_text(texts["page_template"].format(page=slice + 1, max=max_page, precent=percent, text=content), reply_markup=Inline.arrows() if slice != max_page - 1 else Inline.down())
 
 @dp.message(F.text)
+@log
 async def echo_message(msg: types.Message):
     user_id = msg.from_user.id
     state = get_user_key(user_id, "state")
@@ -150,31 +165,29 @@ async def echo_message(msg: types.Message):
         await message_write(msg)
 
     current = get_user_key(user_id, "on_panel")
-    try:
-        if current == "allow":
-            if await process_allow(msg.text, get_user_key(user_id, "redacting"), msg):
-                await msg_with_hide(texts["success"], msg)
-            set_user_key(user_id, {"on_panel": ""})
-        elif current == "desc":
-            set_user_key(user_id, {"description": msg.text, "on_panel": ""})
+    if current == "allow":
+        if await process_allow(msg.text, get_user_key(user_id, "redacting"), msg):
             await msg_with_hide(texts["success"], msg)
-        elif current.split(':')[0] == "set_desc_chat":
-            set_chat_key(current.split(':')[1], {"description": msg.text})
-            set_user_key(user_id, {"on_panel": ""})
-            await msg_with_hide(texts["success"], msg)
-        elif current == "new_admin":
-            await make_admin(msg.text, get_user_key(user_id, "redacting"), msg)
-            await msg_with_hide(texts["success"], msg)
-        elif current == "ban":
-            await ban(msg.text, get_user_key(user_id, "redacting"), msg, bot)
-            await msg_with_hide(texts["success"], msg)
-        elif current == "joining":
-            await join_id(user_id, msg.text, msg)
         set_user_key(user_id, {"on_panel": ""})
-    except Exception as e:
-        await msg_with_hide(texts["error"], msg)
+    elif current == "desc":
+        set_user_key(user_id, {"description": msg.text, "on_panel": ""})
+        await msg_with_hide(texts["success"], msg)
+    elif current.split(':')[0] == "set_desc_chat":
+        set_chat_key(current.split(':')[1], {"description": msg.text})
+        set_user_key(user_id, {"on_panel": ""})
+        await msg_with_hide(texts["success"], msg)
+    elif current == "new_admin":
+        await make_admin(msg.text, get_user_key(user_id, "redacting"), msg)
+        await msg_with_hide(texts["success"], msg)
+    elif current == "ban":
+        await ban(msg.text, get_user_key(user_id, "redacting"), msg, bot)
+        await msg_with_hide(texts["success"], msg)
+    elif current == "joining":
+        await join_id(user_id, msg.text, msg)
+    set_user_key(user_id, {"on_panel": ""})
 
 @dp.message(F.photo)
+@log
 async def echo_photo(msg: types.Message):
     time_now, user_id, username, sent, cooldown = await set_msg_data(msg)
     if not cooldown:
@@ -191,6 +204,7 @@ async def echo_photo(msg: types.Message):
 
 # CALLBACK FUNCTIONS
 @dp.callback_query(lambda query: query.data == "userlist")
+@log
 async def get_user_list(callback: types.CallbackQuery):
     output = 'Пользователи:'
     redacting = get_user_key(callback.from_user.id, "redacting")
@@ -199,32 +213,38 @@ async def get_user_list(callback: types.CallbackQuery):
     await callback.message.answer(output)
 
 @dp.callback_query(lambda query: query.data == "allow")
+@log
 async def allow_user(callback: types.CallbackQuery):
     await msg_with_hide(texts["allow_ask"], callback.message)
     set_user_key(callback.from_user.id, {"on_panel": "allow"})
 
 @dp.callback_query(lambda query: query.data.startswith('set_desc'))
+@log
 async def set_desc_chat(callback: types.CallbackQuery):
     args = callback.data.split(':')
     set_user_key(callback.from_user.id, {"on_panel": f"set_desc_chat:{args[1]}"})
     await msg_with_hide(texts["chat_desc_input"], callback.message)
 
 @dp.callback_query(lambda query: query.data == "make_admin")
+@log
 async def new_admin(callback: types.CallbackQuery):
     args = callback.data.split(':')
     await bot.send_message(callback.from_user.id, texts["admin_ask"])
     set_user_key(callback.from_user.id, {"redacting": args[1], "on_panel": "new_admin"})
 
 @dp.callback_query(lambda query: query.data == "ban_user")
+@log
 async def ban_user(callback: types.CallbackQuery):
     await bot.send_message(callback.from_user.id, texts["ban_ask"])
     set_user_key(callback.from_user.id, {"on_panel": "ban"})
 
 @dp.callback_query(lambda query: query.data == "create")
+@log
 async def create_button(callback: types.CallbackQuery):
     await alt_create(callback.from_user.id, callback.message)
 
 @dp.callback_query(lambda query: query.data.startswith('alt_open'))
+@log
 async def alt_open(callback: types.CallbackQuery):
     args = callback.data.split(':')
     chat_id = args[1]
@@ -237,22 +257,22 @@ async def alt_open(callback: types.CallbackQuery):
         await asyncio.create_task(listener(callback.message, chat_id, 0.5, user_id))
 
 @dp.callback_query(lambda query: query.data.startswith('hide_msg'))
+@log
 async def hide_msg(callback: types.CallbackQuery):
-    try:
-        args = callback.data.split(':')
-        deserialized = get_cached(int(args[1]), "hide_cell", "content")
-        msg = await serialize_one(deserialized, bot)
-        delete_key(cache, {"id": int(args[1]), "type": "hide_cell"})
-        await msg.delete()
-    except Exception as e:
-        print("bad request " + str(e))
+    args = callback.data.split(':')
+    deserialized = get_cached(int(args[1]), "hide_cell", "content")
+    msg = await serialize_one(deserialized, bot)
+    delete_key(cache, {"id": int(args[1]), "type": "hide_cell"})
+    await msg.delete()
 
 @dp.callback_query(lambda query: query.data.startswith('get'))
+@log
 async def get_button(callback: types.CallbackQuery):
     args = callback.data.split(':')
     await load_get(args[1], args[2], callback.message)
 
 @dp.callback_query(lambda query: query.data.startswith('to_admin'))
+@log
 async def alt_admin(callback: types.CallbackQuery):
     args = callback.data.split(':')
     if int(args[1]) not in get_chat_key(args[2], "banned"):
@@ -260,11 +280,13 @@ async def alt_admin(callback: types.CallbackQuery):
         await msg_with_hide(texts["success"], callback.message)
 
 @dp.callback_query(lambda query: query.data.startswith('to_ban'))
+@log
 async def alt_ban(callback: types.CallbackQuery):
     args = callback.data.split(':')
     await ban(await get_usercode(args[1]), args[2], callback.message, bot)
 
 @dp.callback_query(lambda query: query.data.startswith('reload'))
+@log
 async def reload_profile(callback: types.CallbackQuery):
     args = callback.data.split(':')
     data = get_cached(int(args[1]), "profile_cell", "content")
@@ -272,6 +294,7 @@ async def reload_profile(callback: types.CallbackQuery):
     await control_profile(callback.from_user.id, callback.message, msg=msg)
 
 @dp.callback_query(lambda query: query.data.startswith('desc'))
+@log
 async def desc_set(callback: types.CallbackQuery):
     set_user_key(callback.from_user.id, {"on_panel": "desc"})
     await msg_with_hide(texts["desc_input"], callback.message)
@@ -340,22 +363,20 @@ async def button_match(current, button, callback, args):
     return [content, buttons]
 
 @dp.callback_query(lambda query: query.data.startswith('menu'))
+@log
 async def menu(callback: types.CallbackQuery):
     args = callback.data.split(':')
     button = args[1]
     current = callback.message.text
-    try:
-        output = await button_match(current, button, callback, args)
-        content = output[0]
-        buttons = output[1]
-        if button == 'list':
-            buttons = Inline.joined_gen(Inline, callback)
-        elif button == 'users_list':
-            buttons = Inline.users_gen(Inline, callback, get_user_key(callback.from_user.id, "redacting"))
-        if content:
-            await callback.message.edit_text(text=content, reply_markup=buttons)
-    except:
-        await msg_with_hide(texts["error"], callback.message)
+    output = await button_match(current, button, callback, args)
+    content = output[0]
+    buttons = output[1]
+    if button == 'list':
+        buttons = Inline.joined_gen(Inline, callback)
+    elif button == 'users_list':
+        buttons = Inline.users_gen(Inline, callback, get_user_key(callback.from_user.id, "redacting"))
+    if content:
+        await callback.message.edit_text(text=content, reply_markup=buttons)
 
 async def newsletter_handler(content):
     for user in users.find():

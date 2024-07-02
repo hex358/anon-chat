@@ -17,9 +17,10 @@ users = db["users"]
 userchats = db["userchats"]
 cache = db["cache"]
 
-from assets.randomizer import gen_split, gen, id_gen
-from assets.file_op import *
-from assets.button_gen import Inline, Keyboard
+from randomizer import gen_split, gen, id_gen
+from file_op import *
+from button_gen import Inline, Keyboard
+from wrappers import _big_report, _report, log
 
 texts = json.load(open('base/messages.json', 'r', encoding='utf-8'))
 
@@ -40,7 +41,7 @@ async def safe_update(bot):
             else:
                 await msg_with_hide(texts["reboot_bot_safe"], None, id=user_id, bot=bot)
         except Exception as e:
-            print(f"Failed to update user {user["orig"]} {e}")
+            _report("err", f"Failed to update user {e}", user=user["orig"])
 
 
 
@@ -64,7 +65,6 @@ async def load_serialized(bot):
             output[cached["id"]] = Message.model_validate(obj=json.loads(msg),context={"bot":bot})
         return output
     except Exception as e:
-        print("bad load " + str(e))
         return {}
 
 
@@ -208,7 +208,6 @@ async def generate_profile(user, msg, callback):
 async def alt_create(id, msg):
     gen_name = gen(5)
     await set_up(gen_name, id)
-    print("DFEFW")
     append_key(users, {"orig":id},{"joined":gen_name})
     await msg_with_hide(texts["create"].format(id=gen_name), msg)
 
@@ -304,7 +303,7 @@ async def set_up(id, creator):
         }
         upload(userchats, content)
     else:
-        print("wtf")
+        pass
 
 def set_up_user(id, usercode):
     content = {
@@ -468,7 +467,6 @@ async def listener(msg: types.Message, chat_id, update_freq, user_id):
                 user = split_template[0]
                 date = split_template[1]
                 src = split_template[2]
-                print(split_template)
                 text = " ".join(split_template[3:])
                 usertype = await get_usertype(user_id, user, chat_id)
                 if src == "":
