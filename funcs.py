@@ -17,13 +17,6 @@ users = db["users"]
 userchats = db["userchats"]
 cache = db["cache"]
 
-# from ZODB import DB, FileStorage
-# import transaction
-# storage = FileStorage.FileStorage('cache/objects.fs')
-# db = DB(storage)
-# connecion = db.open()
-# cache = connecion.root()
-
 from assets.randomizer import gen_split, gen, id_gen
 from assets.file_op import *
 from assets.button_gen import Inline, Keyboard
@@ -42,11 +35,10 @@ async def safe_update(bot):
                     reset_sessions[cell] = cell_data
                     set_user_key(user["orig"], {cell: "" if type(cell_data) == str else 0})
             user_id = int(user["orig"])
-            if False:
-                if len(reset_sessions) != 0:
-                    await msg_with_hide(texts["reboot_bot"].format(interrupted=reset_sessions), None, id=user_id, bot=bot)
-                else:
-                    await msg_with_hide(texts["reboot_bot_safe"], None, id=user_id, bot=bot)
+            if len(reset_sessions) != 0:
+                await msg_with_hide(texts["reboot_bot"].format(interrupted=reset_sessions), None, id=user_id, bot=bot)
+            else:
+                await msg_with_hide(texts["reboot_bot_safe"], None, id=user_id, bot=bot)
         except Exception as e:
             print(f"Failed to update user {user["orig"]} {e}")
 

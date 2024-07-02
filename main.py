@@ -1,49 +1,20 @@
 # IMPORTS
-import os
-import json
-import asyncio
-import time
-from datetime import datetime
-from threading import Thread
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters.command import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import F
 
-from pymongo import MongoClient
-
-from assets.randomizer import gen, gen_alt
-from assets.clear import _clear
-from assets.file_op import *
-from assets.button_gen import Inline
+from assets.randomizer import gen_alt
 
 # LOAD ADDITIONAL FUNCTIONS
 import funcs
 from funcs import *
+from wrappers import _big_report, _report
 
-last_usage = time.time()
-new_usage = last_usage
-
-def time_refresh():
-    last_usage = time.time()
-
-def _report(type, text, user=False, timed=False):
-    global last_usage
-    new_usage = time.time()
-    run_time = new_usage - last_usage
-    last_usage = new_usage
-    print(f"{report_types[type]} {str(user)+': ' if user else ""}{text} ({round(run_time,3) if timed else ""})")
-
-def _big_report(text):
-    print("="*int(20-(len(text)/2)) + text + "="*int(20-(len(text)/2)))
-
-data = json.load(open('base/general.json', 'r'))
-report_types = json.load(open('base/console_texts.json', 'r'))
+data = json.load(open('config.json', 'r'))
 texts = json.load(open('base/messages.json', 'r', encoding='utf-8'))
-
 
 # BOT SETUP AND START
 _big_report("LAUNCHING")
@@ -134,15 +105,23 @@ async def close(msg: types.Message):
     await msg_with_hide(texts["closed"], msg)
 
 # ADMIN COMMANDS
-@dp.message(Command('clear'))
+@dp.message(Command('drop'))
 async def clear(msg: types.Message):
     if msg.from_user.id in data["admins"]:
         users.drop()
         userchats.drop()
-        await msg.answer('cleared')
+        cache.drop()
+        await msg.answer('Dropped databases')
 
-@dp.message(Command('exit'))
-async def exit(msg):
+@dp.message(Command('newsletter'))
+async def newsletter(msg: types.Message):
+    print(msg.__name__)
+    content = msg.text.split(' ')[1]
+    if msg.from_user.id in data["admins"]:
+        await newsletter_handler(content)
+
+@dp.message(Command('kill'))
+async def kill(msg):
     if msg.from_user.id in data["admins"]:
         await newsletter_handler("Bot was shut down")
         await dp.stop_polling()
