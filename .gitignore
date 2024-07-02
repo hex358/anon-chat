@@ -3,4 +3,6 @@
 Scripts
 pyvenv.cfg
 _test_units
-__pycache__
+logs.log
+**/__pycache__/
+.gitignore
