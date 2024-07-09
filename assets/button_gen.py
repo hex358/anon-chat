@@ -58,7 +58,7 @@ class Inline:
         builder.adjust(2, 2, 2, 1)
         return builder.as_markup()
 
-    def arrows():
+    def arrows(self,slice_pos,chat,message_id,opened=False):
         builder = InlineKeyboardBuilder()
         builder.add(types.InlineKeyboardButton(
             text=texts["prev"],
@@ -68,24 +68,55 @@ class Inline:
             text=texts["next"],
             callback_data="slice_up")
         )
+        if opened:
+            builder.add(types.InlineKeyboardButton(
+                text=f"Скрыть медиа",
+                callback_data=f"hide_get_data:{message_id}:0")
+            )
+        elif slice_pos+1:
+            builder.add(types.InlineKeyboardButton(
+                text=f"Просмотр медиа",
+                callback_data=f"get_data:{chat}:{slice_pos}:0")
+            )
         builder.adjust(2)
         return builder.as_markup()
 
-    def up():
+    def up(self,slice_pos,chat,message_id,opened=False):
         builder = InlineKeyboardBuilder()
+        print(slice_pos)
         builder.add(types.InlineKeyboardButton(
             text=texts["next"],
             callback_data="slice_up")
         )
-        builder.adjust(1)
+        if opened:
+            builder.add(types.InlineKeyboardButton(
+                text=f"Скрыть медиа",
+                callback_data=f"hide_get_data:{message_id}:1")
+            )
+        elif slice_pos+1:
+            builder.add(types.InlineKeyboardButton(
+                text=f"Просмотр медиа",
+                callback_data=f"get_data:{chat}:{slice_pos}:1")
+            )
+        builder.adjust(1,1)
         return builder.as_markup()
 
-    def down():
+    def down(self,slice_pos,chat,message_id,opened=False):
         builder = InlineKeyboardBuilder()
         builder.add(types.InlineKeyboardButton(
             text=texts["prev"],
-            callback_data="slice_down")
+            callback_data=f"slice_down")
         )
+        if opened:
+            builder.add(types.InlineKeyboardButton(
+                text=f"Скрыть медиа",
+                callback_data=f"hide_get_data:{message_id}:-1")
+            )
+        elif slice_pos+1:
+            builder.add(types.InlineKeyboardButton(
+                text=f"Просмотр медиа",
+                callback_data=f"get_data:{chat}:{slice_pos}:-1")
+            )
         builder.adjust(1)
         return builder.as_markup()
 

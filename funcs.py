@@ -9,6 +9,7 @@ import pydantic
 from aiogram import types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.serialization import deserialize_telegram_object_to_python
+from aiogram.utils.media_group import MediaGroupBuilder
 
 from pymongo import MongoClient
 client = MongoClient('mongodb://localhost:27017/')
@@ -52,9 +53,17 @@ async def hide_button_gen(msg, unique):
     return Inline.hide(Inline, unique)
 
 # Save serialized objects to a file
-async def save_serialized(msg, unique, type, user):
-    content = str( json.dumps( deserialize_telegram_object_to_python(msg)) )
-    create_cached(unique, type, user, content)
+async def save_serialized(msg, unique, type, user, special=False):
+    if not special:
+        content = json.dumps( deserialize_telegram_object_to_python(msg))
+        create_cached(unique, type, user, content)
+    else:
+        content = []
+        ids = []
+        for element in msg:
+            content.append( json.dumps(deserialize_telegram_object_to_python(element)) )
+            ids.append(element.message_id)
+        create_cached(unique, type, user, content, ids=ids)
 
 # Load serialized objects from a file
 async def load_serialized(bot):
@@ -92,6 +101,11 @@ async def profile_cell(msg, user, unique):
     await save_serialized(msg, unique, "profile_cell", user)
     set_user_key(user, {"profile_cell": unique})
 
+# FUNCTION TO CREATE MEDIA CELL
+async def media_cell(msg, user, unique):
+    await save_serialized(msg, unique, "media_cell", user)
+    set_user_key(user, {"media_cell": unique})
+
 # FUNCTION TO GET CURRENT TIME IN LONDON TIMEZONE
 async def get_time():
     london_tz = pytz.timezone('Europe/London')
@@ -120,16 +134,31 @@ async def ban_check(user, chat, msg):
     return False
 
 # FUNCTION TO LOAD CHAT DATA
-async def load_get(to_get_id, user_id, msg):
+async def load_get(to_get_id, user_id, msg, callback=False):
     user_id = int(user_id)
+    unique = id_gen(8)
     set_user_key(user_id, {"getting": to_get_id})
-    chat = await get_chat_sliced(to_get_id, 256, user_id)
     set_user_key(user_id, {"chat_slice": 0})
-    slice = get_user_key(user_id, "chat_slice")
+    set_user_key(user_id, {"media_cell": 0})
+    set_user_key(user_id, {"status_opened": 0})
+    set_user_key(user_id, {"media_id": unique})
+
+    data = await get_chat_sliced(to_get_id, 256, user_id)
+    chat = data[0]
+    sources = data[1][0]
     max = len(chat)
-    precent = math.ceil((slice + 1) / max * 100)
-    content = " ".join(chat[slice])
-    await msg.answer(texts["page_template"].format(page=slice + 1, max=max, precent=precent, text=content), reply_markup=Inline.up() if max != 1 else None)
+    precent = math.ceil(1 / max * 100)
+    content = " ".join(chat[0])
+
+    message_text = texts["page_template"].format(page=1, max=max, precent=precent, text=content)
+    buttons = Inline.up(Inline,
+                        0 if sources else -1,
+                        get_user_key(msg.from_user.id if not callback else callback.from_user.id, "getting"),
+                        unique) if max != 1 else None
+
+    await msg.answer(message_text, reply_markup=buttons)
+
+
 
 # FUNCTION TO DELETE CHAT DATA
 async def delete_chat(chat):
@@ -324,7 +353,9 @@ def set_up_user(id, usercode):
         "last_online": time.time(),
         "description": "",
         "msg_count": 0,
-        "profile_cell": 0
+        "profile_cell": 0,
+        "media_cell": 0,
+        "media_id": 0
     }
     return content
 
@@ -370,44 +401,56 @@ async def get_orig_id(usercode):
 async def get_chat_sliced(chat, sliceby, id):
     usercode = await get_orig_id(id)
     messages = get_chat_key(chat, "messages")
-    count = 0
-    slicer = 0
     output = []
     column = []
+    attachments = {}
+    slicer = 0
+    slice_pos = 0
+    attachments[0] = []
     for message in messages:
-        split_template = message.split(' ')
+        user, date, src, *text_parts = message.split(' ')
+        text = " ".join(text_parts)
+        usertype = await get_usertype(int(id), user, int(chat))
 
-        user = split_template[0]
-        date = split_template[1]
-        src = split_template[2]
+        if src != "":
+            attachments[slice_pos].append(src)
+            text += " [Медиа] "
+            slicer += 10
 
-        text = " ".join(split_template[3:])
-        row = texts["safe_message_template"].format(usercode=user, content=text, usertype=await get_usertype(int(id), user, int(chat))) + '\n\n'
-        length = len(row)
+        row = texts["safe_message_template"].format(usercode=user, content=text, usertype=usertype) + '\n\n'
+
         column.append(row)
-        count += length
-        slicer += length
+        slicer += len(row)
+
         if slicer > sliceby:
-            slicer = 0
+            slice_pos += 1
+            attachments[slice_pos] = []
             output.append(column)
             column = []
+            slicer = 0
 
-    if slicer <= sliceby:
+    if column:
         output.append(column)
-    return output
+    print(attachments)
+    return [output, attachments]
+
 
 # FUNCTION TO MODULATE CHAT SLICE
 async def modulate_slice(msg_orig, add):
     user_id = msg_orig.from_user.id
     to_get_id = get_user_key(user_id, "getting")
-    chat = await get_chat_sliced(to_get_id, 256, user_id)
-    slice = get_user_key(user_id, "chat_slice")
-    set_user_key(user_id, {"chat_slice": slice + add})
-    slice = get_user_key(user_id, "chat_slice")
+    data = await get_chat_sliced(to_get_id, 256, user_id)
+    chat = data[0]
+    sources = data[1]
+
+    slice = get_user_key(user_id, "chat_slice")+add
+    set_user_key(user_id, {"chat_slice": slice})
+    set_user_key(user_id, {"media_cell": slice})
+
     max = len(chat)
     precent = math.ceil((slice + 1) / max * 100)
     content = " ".join(chat[slice])
-    return slice, max, precent, content
+    return int(slice), max, precent, content, sources
 
 # FUNCTION TO SET CHAT DESCRIPTION (PLACEHOLDER)
 async def set_desc(user, desc):

@@ -41,8 +41,13 @@ def update_cached(id, type, set):
     updated = {"$set": set}
     cache.update_one(filter, updated)
 
-def create_cached(id, type, user, start_set):
-    cache.insert_one({"id": id, "type": type, "user": user, "content": start_set})
+def create_cached(id, type, user, start_set, ids=None):
+    found = cache.find_one({"id": id, "type": type})
+    if found:
+        found["content"] = start_set
+        found["ids"] = ids
+        return 0
+    cache.insert_one({"id": id, "type": type, "user": user, "content": start_set, "ids": ids})
 
 def get_cached(id, type, to_get):
     return cache.find_one({"id": id, "type": type})[to_get]

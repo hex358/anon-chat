@@ -1,10 +1,13 @@
 # IMPORTS
+from pymongo import MongoClient
+import ast
 
 from aiogram import Bot, Dispatcher
 from aiogram.filters.command import Command
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import F
+from aiogram.methods.delete_messages import DeleteMessages
 
 from randomizer import gen_alt
 
@@ -141,17 +144,103 @@ async def kill(msg):
     _big_report("BOT KILLED")
 
 # CALLBACK REACTIONS
+@dp.callback_query(lambda query: query.data.startswith('hide_get_data'))
+@log
+async def delete_media_callback(callback: types.CallbackQuery):
+    args = callback.data.split(":")
+    await delete_media(int(args[1]), callback.from_user.id, callback.message,int(args[2]))
+
+async def delete_media(id,user,msg,modifier):
+    chat = get_user_key(user, "getting")
+    ids = get_cached(id, "media_cell", "ids")
+    slice = get_user_key(user, "media_cell")
+    data = await get_chat_sliced(chat, 256, user)
+    sources = data[1][slice]
+
+    if modifier == 0:
+        buttons = Inline.arrows(Inline, slice if sources else -1, chat, id, opened=0)
+    elif modifier == -1:
+        buttons = Inline.down(Inline, slice if sources else -1, chat, id, opened=0)
+    else:
+        buttons = Inline.up(Inline, slice if sources else -1, chat, id, opened=0)
+
+    await msg.edit_reply_markup(reply_markup=buttons)
+
+    await bot.delete_messages(chat_id=msg.chat.id, message_ids=ids)
+    set_user_key(user, {"status_opened": 0})
+    set_user_key(user, {"media_cell": 0})
+    delete_key(cache, {"id": id, "type": "media_cell"})
+
+
+@dp.callback_query(lambda query: query.data.startswith('get_data'))
+@log
+async def get_data(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    set_user_key(user_id, {"status_opened": 1})
+    chat, slice, modifier = callback.data.split(':')[1:4]
+    slice, modifier = int(slice), int(modifier)
+    unique = get_user_key(user_id, "media_id")
+
+    data = await get_chat_sliced(chat, 256, user_id)
+    sources = data[1][slice]
+    media_group = MediaGroupBuilder(caption=f"Изображения чата {chat}")
+
+    for source in sources:
+        media_group.add_photo(media=source)
+
+    msg_to_save = await callback.message.answer_media_group(media=media_group.build())
+
+    if modifier == 0:
+        buttons = Inline.arrows(Inline, slice if sources else -1, chat, unique, opened=1)
+    elif modifier == -1:
+        buttons = Inline.down(Inline, slice if sources else -1, chat, unique, opened=1)
+    else:
+        buttons = Inline.up(Inline, slice if sources else -1, chat, unique, opened=1)
+
+    await callback.message.edit_reply_markup(reply_markup=buttons)
+    await save_serialized(msg_to_save, unique, "media_cell", user_id, special=True)
+
+
+
+async def handle_slice(callback, direction):
+    user_id = callback.from_user.id
+    unique = get_user_key(user_id, "media_id")
+    slice, max_page, precent, content, sources = await modulate_slice(callback, direction)
+    sources = sources[slice]
+
+    status_opened = get_user_key(user_id, "status_opened")
+    if status_opened:
+        if direction == -1 and slice == 0:
+            await delete_media(unique, user_id, callback.message, 1)
+        elif direction == 1 and slice == max_page - 1:
+            await delete_media(unique, user_id, callback.message, -1)
+        else:
+            await delete_media(unique, user_id, callback.message, 0)
+    status_opened = 0
+
+    message_text = texts["page_template"].format(page=slice + 1, max=max_page, precent=precent, text=content)
+    buttons = Inline.arrows(Inline, slice if sources else -1, get_user_key(user_id, "getting"), unique,
+                            opened=status_opened)
+
+    if (direction == -1 and slice == 0) or (direction == 1 and slice == max_page - 1):
+        buttons = Inline.up(Inline, slice if sources else -1, get_user_key(user_id, "getting"), unique,
+                            opened=status_opened) if direction == -1 else Inline.down(Inline, slice if sources else -1,
+                                                                                      get_user_key(user_id, "getting"),
+                                                                                      unique, opened=status_opened)
+
+    await callback.message.edit_text(message_text, reply_markup=buttons)
+
+
 @dp.callback_query(lambda query: query.data == "slice_down")
 @log
 async def down(callback: types.CallbackQuery):
-    slice, max_page, percent, content = await modulate_slice(callback, -1)
-    await callback.message.edit_text(texts["page_template"].format(page=slice + 1, max=max_page, precent=percent, text=content), reply_markup=Inline.arrows() if slice > 0 else Inline.up())
+    await handle_slice(callback, -1)
+
 
 @dp.callback_query(lambda query: query.data == "slice_up")
 @log
 async def up(callback: types.CallbackQuery):
-    slice, max_page, percent, content = await modulate_slice(callback, 1)
-    await callback.message.edit_text(texts["page_template"].format(page=slice + 1, max=max_page, precent=percent, text=content), reply_markup=Inline.arrows() if slice != max_page - 1 else Inline.down())
+    await handle_slice(callback, 1)
 
 @dp.message(F.text)
 @log
@@ -269,7 +358,7 @@ async def hide_msg(callback: types.CallbackQuery):
 @log
 async def get_button(callback: types.CallbackQuery):
     args = callback.data.split(':')
-    await load_get(args[1], args[2], callback.message)
+    await load_get(args[1], args[2], callback.message, callback)
 
 @dp.callback_query(lambda query: query.data.startswith('to_admin'))
 @log
