@@ -147,7 +147,7 @@ async def load_get(to_get_id, user_id, msg, callback=False):
     chat = data[0]
     sources = data[1][0]
     max = len(chat)
-    precent = math.ceil(1 / max * 100)
+    precent = math.ceil(1 / max * 100) if max > 0 else 100
     content = " ".join(chat[0])
 
     message_text = texts["page_template"].format(page=1, max=max, precent=precent, text=content)

@@ -254,6 +254,8 @@ async def echo_message(msg: types.Message):
         await message_write(msg)
 
     current = get_user_key(user_id, "on_panel")
+    if current is None: return
+
     if current == "allow":
         if await process_allow(msg.text, get_user_key(user_id, "redacting"), msg):
             await msg_with_hide(texts["success"], msg)
