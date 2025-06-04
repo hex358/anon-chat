@@ -9,13 +9,10 @@ users = db["users"]
 userchats = db["chats"]
 cache = db["cache"]
 
-def hash_id(identifier):
-    raw = str(identifier).encode('utf-8')
-    return hashlib.sha256(raw).hexdigest()
 
 def upload(collection, content):
     if collection == users and "orig" in content:
-        content["orig"] = hash_id(content["orig"])
+        content["orig"] = content["orig"]
     collection.insert_one(content)
 
 def key(collection, location, to_get):
@@ -27,18 +24,18 @@ def set_key(collection, location, new_values: dict):
     collection.update_one(filter_criteria, updated)
 
 def set_user_key(user, new_values: dict):
-    hashed = hash_id(user)
+    hashed = user
     filter_criteria = {"orig": hashed}
     updated = {"$set": new_values}
     users.update_one(filter_criteria, updated)
 
 def get_user_key(user, to_get):
-    hashed = hash_id(user)
+    hashed = user
     doc = users.find_one({"orig": hashed})
     return doc[to_get] if doc else None
 
 def locate_user(orig_id):
-    hashed = hash_id(orig_id)
+    hashed = orig_id
     return users.find_one({"orig": hashed})
 
 def get_chat_key(chat, to_get):

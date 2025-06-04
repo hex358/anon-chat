@@ -5,7 +5,7 @@
 
   Feature list:
   <ul>
-    <li>communicate without revealing your identity - the IDs are sha256-hashed, so even the bot's owner won't know who actually sent the message</li>
+    <li>communicate without revealing your identity</li>
     <li>securely send and receive images</li>
     <li>create and manage multi-user conversations</li>
     <li>intuitive interface, consisting only of buttons</li>

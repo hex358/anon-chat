@@ -52,7 +52,7 @@ async def safe_update(bot):
 async def hide_button_gen(msg, unique):
     return Inline.hide(Inline, unique)
 
-# Save serialized objects to a file
+
 async def save_serialized(msg, unique, type, user, special=False):
     if not special:
         content = json.dumps( deserialize_telegram_object_to_python(msg))
@@ -65,7 +65,7 @@ async def save_serialized(msg, unique, type, user, special=False):
             ids.append(element.message_id)
         create_cached(unique, type, user, content, ids=ids)
 
-# Load serialized objects from a file
+
 async def load_serialized(bot):
     output = {}
     try:
